@@ -1,0 +1,636 @@
+---
+title: "Segmenting Customer with LRFMP Model"
+author: "Arga Adyatama"
+date: 2023-09-30
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    code-fold: show
+    code-line-numbers: true
+    theme: journal
+editor: visual
+---
+
+# Introduction
+
+The main purpose of this article is to learn how to identify different customer segments in retail industry using **K-Means** clustering method. Customer segmentation enables companies to divide customers into distinct and internally homogeneous groups and interact with each customer segment separately. Moreover, customer segmentation is a critical success factor for understanding behavior of different groups of customers and evaluating their value.
+
+This article is inspired by a publication by [Peker et al.](https://www.emerald.com/insight/content/doi/10.1108/MIP-11-2016-0210/full/html) who proposed an LRFMP (Length, Recency, Frequency, Periodicity) model for classifying customers in the grocery retail industry. All source code and dataset for this article are provided on [my github repo](https://github.com/Argaadya/segmenting_with_lrfmp).
+
+# Library
+
+```{r echo=FALSE}
+library(knitr)
+
+# print everything as paged ----
+knit_print.data.frame <- function (x, options, ...) {
+  rmarkdown::paged_table(x, options) |>
+    rmarkdown:::print.paged_df()
+}
+
+registerS3method("knit_print", "data.frame", knit_print.data.frame)
+```
+
+The following are the required packages that will be used throughout the article. It consists of packages for data wrangling, clustering, and data visualization.
+
+```{r message=FALSE, warning=FALSE}
+# data wrangling
+library(tidyverse)
+library(lubridate)
+
+# clustering model and evaluation
+library(cluster)
+
+# data visualization
+library(scales)
+library(ggfortify)
+library(ggrepel)
+```
+
+# Data Understanding
+
+The dataset is acquired from [Kaggle](https://www.kaggle.com/datasets/atharvaarya25/kpmg-dummy-data). It consists of transaction records and customer data from Sprocket Central Pty Ltd, a medium size bikes & cycling accessories organisation. For the sake of simplicity, we will only segment customers based on their transaction record and ignore the customer demographics.
+
+## Read Data
+
+First we will read and inspect the transaction data.
+
+```{r}
+df_order <- read.csv("data/transaction.csv")
+
+# inspect data
+glimpse(df_order)
+```
+
+Data description:
+
+-   `transation_id`: unique identifier for each transaction
+-   `product_id`: unique identifier for each sold product
+-   `customer_id`: unique identifier for each customer
+-   `transaction_date`: date of transaction
+-   `online_order`: whether the transaction is done online or offline
+-   `order_status`: the status of the order (approved or canceled)
+-   `brand`: the brand of the product
+-   `product_line`: the product line category of the product
+-   `product_class`: the product class of the product
+-   `product_size`: the size of the product
+-   `list_price`: the listed price during transaction
+-   `standard_cost`: the standard cost of the product
+-   `product_first_sold_date`: the first time product is sold
+
+## Inspect Data
+
+Let's check the summary of each column from the data to see if there is anything unusual.
+
+```{r}
+summary(df_order)
+```
+
+There are around 300 transaction with missing order status (`NA`). Next, we will check the order status of each transacton and see how many order are approved, assuming that an approved order is a completed transaction and the company gain revenue from this transaction.
+
+```{r}
+df_order %>% 
+  count(order_status)
+```
+
+Most of the transaction is approved with small number of cancelled transaction.
+
+# Data Preparation
+
+## Data Cleansing
+
+We will exclude the cancelled transaction from the data. We will also transform the transaction date into a proper date data type.
+
+```{r}
+df_clean <- df_order %>% 
+  filter(order_status == "Approved") %>% 
+  mutate(transaction_date = dmy(transaction_date))
+
+head(df_clean)
+```
+
+## LRFMP Model
+
+We will prepare the data for creating the **LRFMP Model**. The model is a development from the traditional RFM model with the addition of 2 new variables: `Length` and `Periodicity`. Below is the definition of each variable from Peker et al.:
+
+-   `Length`: This feature is the time interval, in days, between the customer's first and last visits. It shows the customer loyalty, and the higher the length is, the more loyal a customer is.
+-   `Recency`: The average of number of days between the dates of the customer's N recent visits and the last date of the observation period.
+-   `Length`: Frequency refers to the customer's total number of visits during the observation period. The higher the frequency is, the higher the customer loyalty becomes.
+-   `Monetary`: Monetary refers to the average amount of money spent per visit by the customer during the observation period and reflects the contribution of the customer to the revenue of a company.
+-   `Periodicity`: The standard deviation of the customer's inter-visit times. Periodicity indicates the tendency of a customer's visits to occur at regular intervals.
+
+You may create the LRFMP model based on the above definition. However, for easier interpretation I will change the definition for the following metrics:
+
+-   `Recency`: The number of days between customer's last visit (N = 1) and the last date of observation period
+-   `Periodicity`: The median number of days of customer's inter-visit times. This will change the perspective that instead of looking the regularity of customer visit time, we will look at the average inter-visit time between customer visits.
+
+First let's calculate the `Length`, `Recency`, `Frequency`, and `Monetary` metrics.
+
+```{r}
+df_agg <- df_clean %>% 
+  group_by(customer_id) %>% 
+  summarise(count_visit = n_distinct(transaction_date),
+            sales = sum(list_price),
+            first_order = min(transaction_date),
+            last_order = max(transaction_date)
+            ) %>% 
+  mutate(frequency = count_visit,
+         monetary = sales/count_visit,
+         recency = difftime(max(df_clean$transaction_date), last_order, units = "day") %>% 
+           as.numeric(),
+         length = difftime(last_order, first_order, units = "days") %>% 
+           as.numeric()
+         )
+
+head(df_agg, 10)
+```
+
+Next calculate the `Periodicity` metric.
+
+```{r}
+df_agg_2 <- df_clean %>% 
+  distinct(customer_id, transaction_date) %>% 
+  arrange(customer_id, transaction_date) %>% 
+  group_by(customer_id) %>% 
+  mutate(lag_date = lag(transaction_date),
+         interval_day = difftime(transaction_date, lag_date, units = "day") %>% 
+           as.numeric()
+         ) %>% 
+  drop_na() %>% 
+  group_by(customer_id) %>% 
+  summarise(periodicity = median(interval_day))
+```
+
+Finally, we will combine both dataframe to gain the complete LRFM value for each customer.
+
+```{r}
+df_final <- df_agg %>% 
+  left_join(df_agg_2, by = join_by(customer_id)) %>% 
+  select(customer_id, frequency:length, periodicity)
+
+head(df_final, 10)
+```
+
+## Single Purchase Customer
+
+Let's check the summary of the data.
+
+```{r}
+summary(df_final)
+```
+
+As we can see, there are 50 customers with missing `Periodicity` values. This indicate that the customer only visit the store once (`Frequency` = 1) and not yet return for the second purchase.
+
+```{r warning=F}
+df_final %>% 
+  filter(is.na(periodicity))
+```
+
+We can exclude this customers from further analysis since we don't have enough information for their transaction histories. From a marketing perspective, we can do a separate campaign for this customer to do their second purchase.
+
+```{r}
+df_final <- df_final %>% 
+  drop_na(periodicity)
+
+summary(df_final)
+```
+
+## Scaling Variables
+
+Clustering algorithm will calculate the distance between data point, commonly using the euclidean distance:
+
+$$
+distance(a, b) = \sqrt {\Sigma_{i=1}^n (a_i - b_i)^2}
+$$
+
+If we feed the data directly into the clustering algorithm, the distance from the `Monetary` variable will have significant influence compared to the `Frequency` variable since the `Monetary` variable has wider range of value. Therefore, the algorithm will give better result if all variables has the same scale. To address this problem, we will scale the data using the standardize normal distribution.
+
+$$
+Z = \frac{x - \mu}{\sigma}
+$$
+
+```{r}
+df_scaled_clean <- df_final %>% 
+  column_to_rownames("customer_id") %>% 
+  scale() 
+
+head(df_scaled_clean)
+```
+
+We can see the mean and the standard deviation for each variable
+
+```{r}
+# Mean of each variable
+attr(df_scaled_clean, "scaled:center")
+
+
+# Standard Devaition of each variable
+attr(df_scaled_clean, "scaled:scale")
+```
+
+You can cross check the value yourself.
+
+```{r}
+df_final %>% 
+  select(-customer_id) %>% 
+  summarise_all(mean)
+```
+
+# Segmenting Customers
+
+## Clustering with LRFMP
+
+### Determine Number of Clusters
+
+We will start segmenting customer using the **K-Means** algorithm. If you are not familiar with the algorithm, you may check the [video from StatQuest](https://www.youtube.com/watch?v=4b5d3muPQmA&ab_channel=StatQuestwithJoshStarmer) for a complete step-by-step process of determining the cluster of each data point.
+
+The first thing we do is to determine the optimal number of cluster, which can be evaluated using different metrics. The most common metrics is using the *within sum of square (wss)* which represent the distance between each data point to their respective cluster centroid. The other metric is using **silhouette score**.
+
+> Silhouette Score is a metric to evaluate the performance of clustering algorithm. It uses compactness of individual clusters(intra cluster distance) and separation amongst clusters (inter cluster distance) to measure an overall representative score of how well our clustering algorithm has performed.
+
+The value of the Silhouette score ranges from -1 to 1 with the following interpretation:
+
+-   silhouette score = 1: Points are perfectly assigned in a cluster and clusters are easily distinguishable.
+-   silhouette score = 0: Clusters are overlapping.
+-   silhouette score = -1: Points are wrongly assigned in a cluster.
+
+Here we will show both the WSS and the silhouette score for each number of clusters.
+
+```{r }
+trial_clust <- map_df(2:20,
+                       function(x) {
+                         
+                         # cluster the data
+                         set.seed(123)
+                         clust_temp <- kmeans(df_scaled_clean, centers = x, iter.max = 1000)
+                         
+                         # calculate the silhouette score
+                         silhouette_score <- mean( silhouette(clust_temp$cluster, dist = dist(df_scaled_clean))[ , 3] )
+                         
+                         data.frame(n_clust = x,
+                                    wss = clust_temp$tot.withinss,
+                                    silhouette_score = silhouette_score
+                                    )
+                         }
+                       )
+
+# Highlight Optimal Number of Cluster
+p_1 <- trial_clust %>% 
+  filter(silhouette_score == max(silhouette_score))
+```
+
+First let's visualize the result of silhouette score. The x-axis shows the number of cluster while the y-axis shows the respective silhouette score. Based on the result, if we want to determine the number of cluster using the silhouette score, we will choose the number of cluster = 3 since it has the highest silhouette score.
+
+```{r}
+# visualize result
+trial_clust %>% 
+  ggplot(aes(x = n_clust,
+             y = silhouette_score
+             )
+         ) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_point(data = p_1, size = 5, color = "firebrick3") +
+  scale_x_continuous(breaks = seq(0, 30, 1)) +
+  scale_y_continuous(labels = comma_format()) +
+  theme_minimal() +
+  
+  labs(x = "Number of Cluster",
+       y = "Silhouette Score"
+       ) 
+```
+
+The optimal number of cluster using WSS is a bit more tricky since there is no exact value to be chosen. Instead we will have to look for the *elbow* or the point where the decrease in WSS is considered to be no longer significant. The following figure is an example of determining the number of clustering using elbow method.
+
+```{r out.width="80%", echo=FALSE}
+knitr::include_graphics("asset/The-elbow-method-of-k-means.png")
+```
+
+Below are the result of our clustering. There is no clear elbow since the curve is not so steep compared to the previous figure. You may choose the number of cluster between 4 to 6 as the optimal number of cluster since after number of cluster = 6 the decrease in WSS is starting to get very small compared to the initial decrease from number of cluster = 2 to 3.
+
+```{r }
+# visualize result
+trial_clust %>% 
+  ggplot(aes(x = n_clust,
+             y = wss
+             )
+         ) +
+  geom_line() +
+  geom_point(size = 2) +
+  scale_x_continuous(breaks = seq(0, 30, 1)) +
+  scale_y_continuous(labels = comma_format()) +
+  theme_minimal() +
+  
+  labs(x = "Number of Cluster",
+       y = "Within Sum of Square (WSS)"
+       ) 
+
+```
+
+### Clustering
+
+Determining the number of optimal clusters is always hard, especially for higher dimension dataset with many variables. It also influenced by our domain knowledge regarding the business implication of the result. Thus, one should not have to stick to a single number but rather focus more on the result of the cluster. For this use case, we will use **number of cluster = 4** since it will give more simple result and easier interpretation since we don't have to explain a large number of cluster. It will also give us more room for grouping the outlier or high/low performing customers together.
+
+```{r}
+# Clustering with optimal number of cluster
+set.seed(123)
+k_clust <- kmeans(df_scaled_clean, centers = 4, iter.max = 1000)
+
+# Assign cluster to each customer
+list_cluster <- data.frame(customer_id = names(k_clust$cluster),
+                           cluster = k_clust$cluster
+                           )
+
+df_out <- df_final %>% 
+  mutate(customer_id = as.character(customer_id)) %>% 
+  inner_join(list_cluster, by = join_by(customer_id)) %>% 
+  mutate(cluster = as.character(cluster))
+
+head(df_out, 10)
+```
+
+### Profiling Customers
+
+The next step after we assign cluster segment for each customer is profiling the different segments and identify the difference between them. We will get the centroid of the mean of each variables from each cluster to profile the member of each cluster.
+
+```{r}
+df_out %>% 
+  group_by(cluster) %>% 
+  summarise(count_member = n_distinct(customer_id),
+            across(frequency:periodicity, mean)
+            ) %>%
+  mutate(percent_member = count_member/sum(count_member)) %>% 
+  relocate(percent_member, .after = count_member) %>% 
+  arrange(desc(count_member)) %>% 
+  
+  # format the number
+  mutate_at(vars(contains("percent")), percent) %>% 
+  mutate_if(is.numeric, comma)
+```
+
+Let's try to characterize each cluster based on their LRFMP values. You can assign different cluster name based on your own interpretation.
+
+**Cluster 3: Most Loyal**
+
+Cluster 3 has the highest number of member, with 60% of customers belong to this cluster. They are identified by the high `Frequency` of visit and also the most `Recent` member to visit the store. They are also the most loyal indicated by the `Length` variable. They will on average visit our store once a month based on the `Periodicity` value. We must keep this segment of customers since they are the most valuable.
+
+**Cluster 1: Regular**
+
+Cluster 1 is indicated by their low `Monetary` value compared to other segments. However, they still has high `Frequency` of visit and quite loyal. They wil visit our store every 2 months on average based on the `Periodicity`value.
+
+**Cluster 2: Hibernating**
+
+Cluster 2 is indicated by their `Recency` which shows that their last visit to our store was around 4 months ago. This cluster may require special treatment to prevent them from churning to other competitor. Although they have visited us around 4 times based on their `Frequency`, they are also the least loyal as shown by the value of `Length`.
+
+**Cluster 4: Seasonal**
+
+Cluster 4 has the lowest number of member, with only 10% of customers belong to this cluster. They are identified by the lowest `Frequency` of visit (only 3 times) and on average only visit our store around every 3-4 months based on the `Periodicity` value.
+
+### Visualize Cluster
+
+We may also want to visualize the clustering result to help us interpret the data more easily and see if there is any overlapping segments. However, since we have more than 2 variables as the base of our segmentation, we cannot just plot the data into the plot. We will use the **Principle Component Analyst (PCA)** to reduce our data into fewer dimension so they can be visualized. If you are interested to learn more about PCA you can visit the following [video](https://www.youtube.com/watch?v=FgakZw6K1QQ&pp=ygUNc3RhdHF1ZXN0IHBjYQ%3D%3D).
+
+```{r}
+autoplot(k_clust, 
+         data = df_scaled_clean, 
+         colour = 'cluster', 
+         size = 2, 
+         alpha = 0.5,
+         loadings = T, 
+         loadings.label = T, 
+         loadings.label.size = 4
+         ) +
+  theme_minimal()
+```
+
+The x-axis shows the first dimension (PC1) from the PCA while the y-axis shows the second dimension (PC2) from the PCA. PC1 give us 41.8% of information while PC2 give us 26.8% of information, therefore the plot that we see contains around 69% of information from the data that we have while the remaining 31% of information is not presented. That's why some clusters are seen overlapped to each other perhaps because no additional information is presented. The red label and text indicated the direction of each LRFMP variables, with data that is on the direction of the arrow indicate higher value of the variable and vice versa. For example, the frequency arrow is directed to the upper left of the plot, and cluster 3 is also located on that direction. We know from the previous table that cluster 3 has highest `Frequency`. Meanwhile, cluster 4 which are located on the opposite of the frequency arrow has the least `Frequency`.
+
+From the plot above we can see that the four segments of customer are almost perfectly separated with some segments still overlapping. Cluster 2 is the least recent (has high `Recency`) and also the least loyal (has low `Length`). Cluster 3 has highest `Frequency` and lowest `Recency` while cluster cluster 4 has lowest `Frequency`.
+
+## Clustering LFRMP and Product Preferences
+
+### Product Preferences
+
+We have done segmenting customers using the LRFMP model on the previous section. Based on the result, we can also identify that there are several segments of customer. On this section, we will try to add more variables to consider, namely the product preference. By knowing what is the preferred product for each segment, we can provide better and personalized promotion and campaign to approach the customer.
+
+Let's once again look at the initial transaction data.
+
+```{r}
+head(df_clean)
+```
+
+There are several information about the product purchased: `brand`, `product_line`, `product_classs`, and `product_size`.
+
+Let's try to check the product preference based on the product line. We will look at the unique value of the product line.
+
+```{r}
+unique(df_clean$product_line)
+```
+
+There is a product line that has empty string ("") value. We will transform this into *Other*.
+
+```{r}
+df_clean <- df_clean %>% 
+  mutate(product_line = ifelse(product_line == "", "Other", product_line))
+
+df_clean %>% 
+  distinct(product_line)
+```
+
+To represent the product preference of each customer, we will get the `Monetary` spending for each product line. Knowing this information will help us understand what line of product each segment prefer to buy at what price range.
+
+```{r}
+df_agg_3 <- df_clean %>% 
+  group_by(customer_id, product_line) %>% 
+  summarise(count_visit = n_distinct(transaction_date),
+            sales = sum(list_price),
+            
+            .groups = "drop"
+            ) %>% 
+  mutate(frequency = count_visit,
+         monetary = sales/count_visit
+         ) %>% 
+  select(customer_id, product_line, monetary) %>% 
+  pivot_wider(names_from = product_line,
+              values_from = monetary
+              )
+
+head(df_agg_3, 10)
+```
+
+Since most customers will not buy all product line, we will replace the missing value with 0.
+
+```{r}
+df_agg_3 <- df_agg_3 %>% 
+  mutate_at(vars(Mountain:Other),
+            ~ifelse(is.na(.), 0, .)
+            )
+
+head(df_agg_3, 10)
+```
+
+Let's combine this information to our previous LRFMP model.
+
+```{r}
+df_final_2 <- df_final %>% 
+  left_join(df_agg_3, by = join_by(customer_id))
+
+head(df_final_2, 10)
+```
+
+### Scaling Variables
+
+```{r}
+df_scaled_clean_2 <- df_final_2 %>% 
+  column_to_rownames("customer_id") %>% 
+  scale() 
+
+head(df_scaled_clean_2)
+```
+
+### Determine Number of Clusters
+
+Let's try to find the optimal number of clusters for the new dataset.
+
+```{r }
+trial_clust <- map_df(2:20,
+                       function(x) {
+                         
+                         # cluster the data
+                         set.seed(123)
+                         clust_temp <- kmeans(df_scaled_clean_2, centers = x, iter.max = 1000)
+                         
+                         # calculate the silhouette score
+                         silhouette_score <- mean( silhouette(clust_temp$cluster, dist = dist(df_scaled_clean))[ , 3] )
+                         
+                         data.frame(n_clust = x,
+                                    wss = clust_temp$tot.withinss,
+                                    silhouette_score = silhouette_score
+                                    )
+                         }
+                       )
+
+# Highlight Optimal Number of Cluster
+p_1 <- trial_clust %>% 
+  filter(silhouette_score == max(silhouette_score))
+```
+
+Let's visualize the result of silhouette score. The x-axis shows the number of cluster while the y-axis shows the respective silhouette score.
+
+```{r}
+# visualize result
+trial_clust %>% 
+  ggplot(aes(x = n_clust,
+             y = silhouette_score
+             )
+         ) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_point(data = p_1, size = 5, color = "firebrick3") +
+  scale_x_continuous(breaks = seq(0, 30, 1)) +
+  scale_y_continuous(labels = comma_format()) +
+  theme_minimal() +
+  
+  labs(x = "Number of Cluster",
+       y = "Silhouette Score"
+       ) 
+```
+
+Let's visualize the WSS value of each number of cluster.
+
+```{r }
+# visualize result
+trial_clust %>% 
+  ggplot(aes(x = n_clust,
+             y = wss
+             )
+         ) +
+  geom_line() +
+  geom_point(size = 2) +
+  scale_x_continuous(breaks = seq(0, 30, 1)) +
+  scale_y_continuous(labels = comma_format()) +
+  theme_minimal() +
+  
+  labs(x = "Number of Cluster",
+       y = "Within Sum of Square (WSS)"
+       ) 
+
+```
+
+### Clustering
+
+Based on the silhouette score, the number of optimal cluster = 3 while from WSS we may choose cluster = 8 since there is a big decrease from 7 to 8. We wil use the number of cluster = 8.
+
+```{r}
+# Clustering with optimal number of cluster
+set.seed(123)
+k_clust <- kmeans(df_scaled_clean_2, centers = 8, iter.max = 1000)
+
+# Assign cluster to each customer
+list_cluster <- data.frame(customer_id = names(k_clust$cluster),
+                           cluster = k_clust$cluster
+                           )
+
+df_out <- df_final_2 %>% 
+  mutate(customer_id = as.character(customer_id)) %>% 
+  inner_join(list_cluster, by = join_by(customer_id)) %>% 
+  mutate(cluster = as.character(cluster))
+
+head(df_out, 10)
+```
+
+### Profiling Customers
+
+The next step after we assign cluster segment for each customer is profiling the different segments and identify the difference between them. For the LRFMP metrics we will calculate the mean while for the monetary value for each product line we will use median. The reason for using median is that since median reflect the middle value of the distribution, if 50% or more customers has monetary value of 0 then the median will be 0. If we insisted on using mean the monetary value wil not be 0 but close to it, making it harder to read and interpret.
+
+The following is the character for each of our segments.
+
+```{r}
+df_out %>% 
+  group_by(cluster) %>% 
+  summarise(count_member = n_distinct(customer_id),
+            across(frequency:periodicity, mean),
+            across(Mountain:Other, median)
+            ) %>%
+  mutate(percent_member = count_member/sum(count_member)) %>% 
+  relocate(percent_member, .after = count_member) %>% 
+  arrange(desc(count_member)) %>% 
+  
+  # format the number
+  mutate_at(vars(contains("percent")), percent) %>% 
+  mutate_if(is.numeric, function(x) x %>% 
+              round(digits = 1) %>% 
+              comma()
+            )
+```
+
+Based on the product preference, we can identify several segments that buy certain product line. These 3 clusters has almost similar LRFMP metrics but differ in their product preference:
+
+- **Cluster 2: Buy Other Product**: This small segment is the only segment that has significant number of customers who purchased `Other` product line. 
+- **Cluster 4 : Buy Mountain**: This segment of customer buy has  significant number of customers who purchased `Mountain` product line. 
+- **Cluster 7 : Buy Touring**: This segment of customer buy has  significant number of customers who purchased `Touring` product line. 
+
+The above clusters has similar LRFMP model with the **Cluster 5: Most Loyal** with the only difference is that cluster 5 doesn't particulary has high number of customer who buy product line other than `Road` and `Standard`. We can also oberserve that **Cluster 3: Low End Buyer** tends to buy `Road` and `Standard` product line with lower price compared to other segments. The segment **Cluster 1: Hibernating** is still observed, with customers who on average has last recent visit around 5 months ago based on their `Recency` value and we see that they also tends to buy `Road` and `Standard` product line with lower price compared to other segments.
+
+### Visualize Cluster
+
+Let's try to visualize the cluster. We can see that most of the clusters are still overlapping since the PC1 and PC2 only provide around 40% of information so the plot is not very informative.
+
+```{r}
+autoplot(k_clust, 
+         data = df_scaled_clean_2, 
+         colour = 'cluster', 
+         size = 2, 
+         alpha = 0.5,
+         loadings = T, 
+         loadings.label = T, 
+         loadings.label.size = 4
+         ) +
+  theme_minimal()
+```
+
+# Conclusion
+
+We have learned how to identify retail customers using K-Means clustering algorithm using the LRFMP model and the customer's product purchases. Using the LRFMP model we can identify that we have a very loyal customers with high frequency of visit and also some customers who hasn't visit our store in a quite long time. By intregrating the LRFMP model and the customer's product purchases, we can identify customers in a more detailed segment, especially for their product preferences. This will be important for the marketing and the business as a whole since we can target specific customer based on their preference, thus giving them more personalized promotion and offers.
