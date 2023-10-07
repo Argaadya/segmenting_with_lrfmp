@@ -124,7 +124,7 @@ We will prepare the data for creating the **LRFMP Model**. The model is a develo
 You may create the LRFMP model based on the above definition. However, for easier interpretation I will change the definition for the following metrics:
 
 -   `Recency`: The number of days between customer's last visit (N = 1) and the last date of observation period
--   `Periodicity`: The median number of days of customer's inter-visit times. This will change the perspective that instead of looking the regularity of customer visit time, we will look at the average inter-visit time between customer visits.
+-   `Periodicity`: The median number of days of customer's inter-visit times. This will change the perspective that instead of looking at the regularity of customer visit time, we will look at the average inter-visit time between customer visits.
 
 First let's calculate the `Length`, `Recency`, `Frequency`, and `Monetary` metrics.
 
@@ -372,21 +372,21 @@ df_out %>%
 
 Let's try to characterize each cluster based on their LRFMP values. You can assign different cluster name based on your own interpretation.
 
-**Cluster 3: Most Loyal**
+**Cluster 4: Most Loyal**
 
-Cluster 3 has the highest number of member, with 60% of customers belong to this cluster. They are identified by the high `Frequency` of visit and also the most `Recent` member to visit the store. They are also the most loyal indicated by the `Length` variable. They will on average visit our store once a month based on the `Periodicity` value. We must keep this segment of customers since they are the most valuable.
+Cluster 4 has high number of member, with 36% of customers belong to this cluster. They are identified by the highest `Frequency` of visit and also the most `Recent` member to visit the store. They are also the most loyal indicated by the `Length` variable. They will on average visit our store once a month based on the `Periodicity` value. We must keep this segment of customers since they are the most valuable.
 
-**Cluster 1: Regular**
+**Cluster 3: Regular**
 
-Cluster 1 is indicated by their low `Monetary` value compared to other segments. However, they still has high `Frequency` of visit and quite loyal. They wil visit our store every 2 months on average based on the `Periodicity`value.
+Cluster 3 is indicated by their high `Frequency` of visits and quite loyal although has lower `Length` compared to the cluster 4. They wil visit our store every 2 months on average based on the `Periodicity`value.
 
 **Cluster 2: Hibernating**
 
 Cluster 2 is indicated by their `Recency` which shows that their last visit to our store was around 4 months ago. This cluster may require special treatment to prevent them from churning to other competitor. Although they have visited us around 4 times based on their `Frequency`, they are also the least loyal as shown by the value of `Length`.
 
-**Cluster 4: Seasonal**
+**Cluster 1: Seasonal**
 
-Cluster 4 has the lowest number of member, with only 10% of customers belong to this cluster. They are identified by the lowest `Frequency` of visit (only 3 times) and on average only visit our store around every 3-4 months based on the `Periodicity` value.
+Cluster 1 has the lowest number of member, with only 10% of customers belong to this cluster. They are identified by the lowest `Frequency` of visit (only 3 times) and on average only visit our store around every 3-4 months based on the `Periodicity` value.
 
 ### Visualize Cluster
 
@@ -405,11 +405,11 @@ autoplot(k_clust,
   theme_minimal()
 ```
 
-The x-axis shows the first dimension (PC1) from the PCA while the y-axis shows the second dimension (PC2) from the PCA. PC1 give us 41.8% of information while PC2 give us 26.8% of information, therefore the plot that we see contains around 69% of information from the data that we have while the remaining 31% of information is not presented. That's why some clusters are seen overlapped to each other perhaps because no additional information is presented. The red label and text indicated the direction of each LRFMP variables, with data that is on the direction of the arrow indicate higher value of the variable and vice versa. For example, the frequency arrow is directed to the upper left of the plot, and cluster 3 is also located on that direction. We know from the previous table that cluster 3 has highest `Frequency`. Meanwhile, cluster 4 which are located on the opposite of the frequency arrow has the least `Frequency`.
+The x-axis shows the first dimension (PC1) from the PCA while the y-axis shows the second dimension (PC2) from the PCA. PC1 give us 41.8% of information while PC2 give us 26.8% of information, therefore the plot that we see contains around 69% of information from the data that we have while the remaining 31% of information is not presented. That's why some clusters are seen overlapped to each other perhaps because no additional information is presented. The red label and text indicated the direction of each LRFMP variables, with data that is on the direction of the arrow indicate higher value of the variable and vice versa. For example, the frequency arrow is directed to the upper left of the plot, and cluster 4 is also located on that direction. We know from the previous table that cluster 4 has highest `Frequency`. Meanwhile, cluster 1 which are located on the opposite of the frequency arrow has the least `Frequency`.
 
-From the plot above we can see that the four segments of customer are almost perfectly separated with some segments still overlapping. Cluster 2 is the least recent (has high `Recency`) and also the least loyal (has low `Length`). Cluster 3 has highest `Frequency` and lowest `Recency` while cluster cluster 4 has lowest `Frequency`.
+From the plot above we can see that the four segments of customer are almost perfectly separated with some segments still overlapping. Cluster 2 is the least recent (has high `Recency`) and also the least loyal (has low `Length`). Cluster 4 has highest `Frequency` and lowest `Recency` while cluster 1 has lowest `Frequency`.
 
-## Clustering LFRMP and Product Preferences
+## Clustering with LFRMP and Product Preferences
 
 ### Product Preferences
 
@@ -608,9 +608,9 @@ df_out %>%
 
 Based on the product preference, we can identify several segments that buy certain product line. These 3 clusters has almost similar LRFMP metrics but differ in their product preference:
 
-- **Cluster 2: Buy Other Product**: This small segment is the only segment that has significant number of customers who purchased `Other` product line. 
-- **Cluster 4 : Buy Mountain**: This segment of customer buy has  significant number of customers who purchased `Mountain` product line. 
-- **Cluster 7 : Buy Touring**: This segment of customer buy has  significant number of customers who purchased `Touring` product line. 
+-   **Cluster 2: Buy Other Product**: This small segment is the only segment that has significant number of customers who purchased `Other` product line.
+-   **Cluster 4 : Buy Mountain**: This segment of customer buy has significant number of customers who purchased `Mountain` product line.
+-   **Cluster 7 : Buy Touring**: This segment of customer buy has significant number of customers who purchased `Touring` product line.
 
 The above clusters has similar LRFMP model with the **Cluster 5: Most Loyal** with the only difference is that cluster 5 doesn't particulary has high number of customer who buy product line other than `Road` and `Standard`. We can also oberserve that **Cluster 3: Low End Buyer** tends to buy `Road` and `Standard` product line with lower price compared to other segments. The segment **Cluster 1: Hibernating** is still observed, with customers who on average has last recent visit around 5 months ago based on their `Recency` value and we see that they also tends to buy `Road` and `Standard` product line with lower price compared to other segments.
 
