@@ -1,5 +1,7 @@
 The main purpose of this article is to learn how to identify different customer segments in retail industry using K-Means clustering method. This article is inspired by a publication by [Peker et al.](https://www.emerald.com/insight/content/doi/10.1108/MIP-11-2016-0210/full/html) who proposed an LRFMP (Length, Recency, Frequency, Periodicity) model for classifying customers in the grocery retail industry.
 
+The dataset is acquired from [Kaggle](https://www.kaggle.com/datasets/atharvaarya25/kpmg-dummy-data). It consists of transaction records and customer data from Sprocket Central Pty Ltd, a medium size bikes & cycling accessories organisation. You can read the full article in [this post](https://rpubs.com/Argaadya/lrfmp_segment).
+
 The cluster produced by K-Means can identify 4 different segments of customers based on their LRFMP value:
 
 <center><img src="lrfmp_model_files/figure-html/unnamed-chunk-22-1.png"></center>
